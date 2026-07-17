@@ -98,7 +98,7 @@ if ( vAPI.webextFlavor.soup.has('devbuild') ) {
 }
 
 const userSettingsDefault = {
-    advancedUserEnabled: false,
+    advancedUserEnabled: true,
     alwaysDetachLogger: true,
     autoUpdate: true,
     cloudStorageEnabled: false,
@@ -123,7 +123,7 @@ const userSettingsDefault = {
     suspendUntilListsAreLoaded: vAPI.Net.canSuspend(),
     tooltipsDisabled: false,
     userFiltersTrusted: false,
-    webrtcIPAddressHidden: false,
+    webrtcIPAddressHidden: true,
 };
 
 const dynamicFilteringDefault = [

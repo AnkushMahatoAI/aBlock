@@ -683,11 +683,21 @@ onBroadcast(msg => {
 /******************************************************************************/
 
 µb.autoSelectRegionalFilterLists = function(lists) {
+    // aBlock Origin: These lists are always selected regardless of their off property.
+    const alwaysOn = new Set([
+        'ablock-zero-tolerance',
+        'IND-0',
+    ]);
     const selectedListKeys = [ this.userFiltersPath ];
     for ( const key in lists ) {
         if ( Object.hasOwn(lists, key) === false ) { continue; }
         const list = lists[key];
         if ( list.content !== 'filters' ) { continue; }
+        if ( alwaysOn.has(key) ) {
+            selectedListKeys.push(key);
+            list.off = false;
+            continue;
+        }
         if ( list.off !== true ) {
             selectedListKeys.push(key);
             continue;

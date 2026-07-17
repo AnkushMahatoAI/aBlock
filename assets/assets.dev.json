@@ -33,6 +33,17 @@
 			"https://cdn.jsdelivr.net/gh/uBlockOrigin/uAssetsCDN@main/filters/badlists.txt"
 		]
 	},
+	"ablock-zero-tolerance": {
+		"content": "filters",
+		"group": "default",
+		"parent": "aBlock filters",
+		"title": "aBlock filters – Zero Tolerance",
+		"tags": "ads privacy annoyances",
+		"contentURL": [
+			"assets/ublock/zero-tolerance.txt"
+		],
+		"supportURL": "https://github.com/AnkushMahatoAI/aBlock"
+	},
 	"ublock-filters": {
 		"content": "filters",
 		"group": "default",
@@ -145,7 +156,6 @@
 	"ublock-experimental": {
 		"content": "filters",
 		"group": "default",
-		"off": true,
 		"title": "uBlock filters – Experimental",
 		"contentURL": "https://ublockorigin.github.io/uAssets/filters/experimental.txt",
 		"cdnURLs": [
@@ -162,7 +172,6 @@
 	"adguard-generic": {
 		"content": "filters",
 		"group": "ads",
-		"off": true,
 		"title": "AdGuard – Ads",
 		"tags": "ads",
 		"contentURL": "https://filters.adtidy.org/extension/ublock/filters/2_without_easylist.txt",
@@ -201,7 +210,6 @@
 	"adguard-spyware-url": {
 		"content": "filters",
 		"group": "privacy",
-		"off": true,
 		"title": "AdGuard/uBO – URL Tracking Protection",
 		"tags": "privacy",
 		"contentURL": "https://ublockorigin.github.io/uAssets/filters/privacy-removeparam.txt",
@@ -279,7 +287,6 @@
 		"group": "annoyances",
 		"group2": "cookies",
 		"parent": "AdGuard/uBO – Cookie Notices",
-		"off": true,
 		"title": "AdGuard – Cookie Notices",
 		"tags": "annoyances cookies",
 		"contentURL": "https://filters.adtidy.org/extension/ublock/filters/18.txt",
@@ -290,7 +297,6 @@
 		"group": "annoyances",
 		"group2": "cookies",
 		"parent": "AdGuard/uBO – Cookie Notices",
-		"off": true,
 		"title": "uBlock filters – Cookie Notices",
 		"tags": "annoyances cookies",
 		"contentURL": "https://ublockorigin.github.io/uAssets/filters/annoyances-cookies.txt",
@@ -306,7 +312,6 @@
 		"group": "annoyances",
 		"group2": "cookies",
 		"parent": "EasyList/uBO – Cookie Notices",
-		"off": true,
 		"title": "EasyList – Cookie Notices",
 		"tags": "annoyances cookies",
 		"preferred": true,
@@ -327,7 +332,6 @@
 		"group": "annoyances",
 		"group2": "cookies",
 		"parent": "EasyList/uBO – Cookie Notices",
-		"off": true,
 		"title": "uBlock filters – Cookie Notices",
 		"tags": "annoyances cookies",
 		"preferred": true,
@@ -355,7 +359,6 @@
 		"group": "annoyances",
 		"group2": "social",
 		"parent": null,
-		"off": true,
 		"title": "EasyList – Social Widgets",
 		"tags": "annoyances social",
 		"preferred": true,
@@ -425,7 +428,6 @@
 		"content": "filters",
 		"group": "annoyances",
 		"parent": "EasyList – Annoyances",
-		"off": true,
 		"title": "EasyList – Other Annoyances",
 		"tags": "annoyances",
 		"preferred": true,
@@ -441,7 +443,6 @@
 		"content": "filters",
 		"group": "annoyances",
 		"parent": "EasyList – Annoyances",
-		"off": true,
 		"title": "EasyList – Chat Widgets",
 		"tags": "annoyances",
 		"preferred": true,
@@ -473,7 +474,6 @@
 		"content": "filters",
 		"group": "annoyances",
 		"parent": "EasyList – Annoyances",
-		"off": true,
 		"title": "EasyList – Newsletter Notices",
 		"tags": "annoyances",
 		"preferred": true,
@@ -491,7 +491,6 @@
 		"content": "filters",
 		"group": "annoyances",
 		"parent": "EasyList – Annoyances",
-		"off": true,
 		"title": "EasyList – Notifications",
 		"tags": "annoyances",
 		"preferred": true,
@@ -508,7 +507,6 @@
 	"ublock-annoyances": {
 		"content": "filters",
 		"group": "annoyances",
-		"off": true,
 		"title": "uBlock filters – Annoyances",
 		"tags": "annoyances",
 		"contentURL": "https://ublockorigin.github.io/uAssets/filters/annoyances.txt",
@@ -686,7 +684,6 @@
 	"IND-0": {
 		"content": "filters",
 		"group": "regions",
-		"off": true,
 		"title": "🇮🇳in 🇱🇰lk 🇳🇵np: IndianList",
 		"tags": "ads assamese bengali gujarati hindi kannada malayalam marathi nepali punjabi sinhala tamil telugu",
 		"lang": "as bn gu hi kn ml mr ne pa sat si ta te",
