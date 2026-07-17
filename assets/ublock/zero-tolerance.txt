@@ -1,7 +1,7 @@
 ! Title: aBlock Origin – Zero Tolerance Filters
 ! Description: Aggressive ad blocking rules for zero ad tolerance. YouTube, Twitch, Google Ads, Facebook, popups and more.
 ! Maintainer: AnkushMahatoAI
-! Last updated: 2026-07-17
+! Last updated: 2026-07-17 (v2 — added movie site download unbreak rules)
 ! Homepage: https://github.com/AnkushMahatoAI/aBlock
 ! License: https://github.com/AnkushMahatoAI/aBlock/blob/master/LICENSE
 
@@ -244,3 +244,104 @@ m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,y
 ! Skip button auto-clicker (for any ads that slip through)
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(trusted-click-element, .ytp-skip-ad-button, , 1000)
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(trusted-click-element, .ytp-ad-skip-button, , 500)
+
+!============== MOVIE / SERIES DOWNLOAD SITES — UNBREAK RULES ==============!
+! These sites use redirect chains and CDN servers for downloads.
+! Without these exceptions the download buttons/links get blocked.
+
+! ---- hdhub4u and related sites ----
+@@||hdhub4u.*^$document
+@@||hdhub4u.*^$xhr
+@@||hdhub4u.*^$xmlhttprequest
+! Allow all outgoing links/redirects FROM hdhub4u (download chains)
+@@$third-party,domain=hdhub4u.mov|hdhub4u.icu|hdhub4u.com|hdhub4u.tw|hdhub4u.in|hdhub4u.fan|hdhub4u.sh|hdhub4u.bz|hdhub4u.st|hdhub4u.sx|hdhub4u.lol
+
+! ---- Commonly used download CDNs / redirect servers by these sites ----
+@@||hubcdn.*^
+@@||hdcdn.*^
+@@||filehub.*^
+@@||drivebot.*^
+@@||gdflix.*^$document
+@@||gdflix.*^$xhr
+@@||gdflix.*^$popup
+@@||gofile.*^$document
+@@||gofile.*^$xhr
+@@||streamtape.*^$document
+@@||streamtape.*^$xhr
+@@||filelions.*^$document
+@@||filelions.*^$xhr
+@@||technorozen.*^$document
+@@||technorozen.*^$xhr
+@@||hubdrive.*^$document
+@@||hubdrive.*^$xhr
+@@||hubcloud.*^$document
+@@||hubcloud.*^$xhr
+@@||pixeldra.*^$document
+@@||pixeldra.*^$xhr
+@@||driveleech.*^$document
+@@||driveleech.*^$xhr
+@@||katdrive.*^$document
+@@||katdrive.*^$xhr
+@@||fastdl.*^$document
+@@||fastdl.*^$xhr
+@@||instantdl.*^$document
+
+! ---- Telegram links (used as download medium) ----
+@@||t.me^$popup,domain=hdhub4u.mov|hdhub4u.icu|hdhub4u.com|hdhub4u.fan|hdhub4u.sh|hdhub4u.st|hdhub4u.lol
+
+! ---- Google Drive / Mega / other legit file hosters ----
+@@||drive.google.com^$document,third-party
+@@||mega.nz^$document,third-party
+@@||mega.io^$document,third-party
+@@||terabox.*^$document,third-party
+@@||1fichier.*^$document,third-party
+@@||mediafire.*^$document,third-party
+
+! ---- Other popular movie download sites ----
+@@||vegamovies.*^$document
+@@||vegamovies.*^$xhr
+@@$third-party,domain=vegamovies.nz|vegamovies.us|vegamovies.trade|vegamovies.in
+
+@@||bollyflix.*^$document
+@@||bollyflix.*^$xhr
+@@$third-party,domain=bollyflix.homes|bollyflix.me|bollyflix.in
+
+@@||mkvcage.*^$document
+@@||mkvcage.*^$xhr
+@@||mkvcinemas.*^$document
+@@||mkvcinemas.*^$xhr
+
+@@||9xmovies.*^$document
+@@||9xmovies.*^$xhr
+@@$third-party,domain=9xmovies.app|9xmovies.pet|9xmovies.ink|9xmovies.store
+
+@@||filmyzilla.*^$document
+@@||filmyzilla.*^$xhr
+@@$third-party,domain=filmyzilla.com.co|filmyzilla.com|filmyzilla.beauty
+
+@@||moviesda.*^$document
+@@||moviesflix.*^$document
+@@||moviesflix.*^$xhr
+@@||1337x.*^$document
+@@||yts.*^$document
+@@||rarbg.*^$document
+@@||katcr.*^$document
+@@||thepiratebay.*^$document
+
+! ---- URL shorteners / bypass links used by download sites ----
+! These are the redirect layers between the download button and the actual file
+@@||linkvertise.*^$popup,document
+@@||shrinkme.*^$popup,document
+@@||shorturl.*^$popup,document
+@@||ouo.*^$popup,document
+@@||bc.vc^$popup,document
+@@||exe.io^$popup,document
+@@||gplinks.*^$popup,document
+@@||earnl.*^$popup,document
+@@||droplink.*^$popup,document
+@@||short-link.*^$popup,document
+@@||fast-dl.*^$popup,document
+
+! ---- Allow popups specifically from download sites ----
+! (download triggers open in new tab/window)
+@@$popup,domain=hdhub4u.mov|hdhub4u.icu|hdhub4u.com|hdhub4u.fan|hdhub4u.sh|hdhub4u.st|hdhub4u.lol|vegamovies.nz|bollyflix.homes|mkvcage.com|9xmovies.app|filmyzilla.com.co|1337x.to|yts.mx
