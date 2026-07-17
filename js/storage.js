@@ -450,9 +450,23 @@ onBroadcast(msg => {
 /******************************************************************************/
 
 µb.loadSelectedFilterLists = async function() {
+    // aBlock Origin: Lists that must always be active, even for existing installs.
+    const alwaysOnLists = [ 'ablock-zero-tolerance', 'IND-0' ];
+
     const bin = await vAPI.storage.get('selectedFilterLists');
     if ( bin instanceof Object && Array.isArray(bin.selectedFilterLists) ) {
         this.selectedFilterLists = bin.selectedFilterLists;
+        // Inject any missing always-on lists into existing installs.
+        let changed = false;
+        for ( const key of alwaysOnLists ) {
+            if ( this.selectedFilterLists.includes(key) === false ) {
+                this.selectedFilterLists.push(key);
+                changed = true;
+            }
+        }
+        if ( changed ) {
+            vAPI.storage.set({ selectedFilterLists: this.selectedFilterLists });
+        }
         return;
     }
 

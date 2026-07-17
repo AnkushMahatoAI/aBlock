@@ -84,7 +84,7 @@ const hiddenSettingsDefault = {
     selfieDelayInSeconds: 53,
     strictBlockingBypassDuration: 120,
     toolbarWarningTimeout: 60,
-    trustedListPrefixes: 'ublock-',
+    trustedListPrefixes: 'ublock- ablock-',
     uiPopupConfig: 'unset',
     uiStyles: 'unset',
     updateAssetBypassBrowserCache: false,
