@@ -59,6 +59,28 @@ const promisify = function(thisArg, fnName) {
     };
 };
 
+const promisifyAction = function(fnName) {
+    const fn = chrome.action && chrome.action[fnName];
+    return function(details, ...args) {
+        if ( !fn ) { return Promise.resolve(); }
+        if ( details instanceof Object && typeof details.tabId === 'number' && details.tabId < 0 ) {
+            details = Object.assign({}, details);
+            delete details.tabId;
+        }
+        return new Promise(resolve => {
+            try {
+                fn.call(chrome.action, details, ...args, function(...args) {
+                    void chrome.runtime.lastError;
+                    resolve(...args);
+                });
+            } catch(ex) {
+                console.error(ex);
+                resolve();
+            }
+        });
+    };
+};
+
 const webext = {
     // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/alarms
     alarms: {
@@ -72,19 +94,19 @@ const webext = {
     // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/action
     // MV3: chrome.action replaces chrome.browserAction
     browserAction: {
-        setBadgeBackgroundColor: promisifyNoFail(chrome.action, 'setBadgeBackgroundColor'),
-        setBadgeText: promisifyNoFail(chrome.action, 'setBadgeText'),
-        setBadgeTextColor: promisifyNoFail(chrome.action, 'setBadgeTextColor'),
-        setIcon: promisifyNoFail(chrome.action, 'setIcon'),
-        setTitle: promisifyNoFail(chrome.action, 'setTitle'),
+        setBadgeBackgroundColor: promisifyAction('setBadgeBackgroundColor'),
+        setBadgeText: promisifyAction('setBadgeText'),
+        setBadgeTextColor: promisifyAction('setBadgeTextColor'),
+        setIcon: promisifyAction('setIcon'),
+        setTitle: promisifyAction('setTitle'),
     },
     // Alias so vapi-background.js can reference webext.action directly
     action: {
-        setBadgeBackgroundColor: promisifyNoFail(chrome.action, 'setBadgeBackgroundColor'),
-        setBadgeText: promisifyNoFail(chrome.action, 'setBadgeText'),
-        setBadgeTextColor: promisifyNoFail(chrome.action, 'setBadgeTextColor'),
-        setIcon: promisifyNoFail(chrome.action, 'setIcon'),
-        setTitle: promisifyNoFail(chrome.action, 'setTitle'),
+        setBadgeBackgroundColor: promisifyAction('setBadgeBackgroundColor'),
+        setBadgeText: promisifyAction('setBadgeText'),
+        setBadgeTextColor: promisifyAction('setBadgeTextColor'),
+        setIcon: promisifyAction('setIcon'),
+        setTitle: promisifyAction('setTitle'),
     },
     // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/menus
     menus: {
