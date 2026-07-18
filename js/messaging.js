@@ -1887,6 +1887,7 @@ const onMessage = function(request, sender, callback) {
                         name: assetKey,
                         text: details.content,
                         trustedSource: assetKey.startsWith('ublock-') ||
+                            assetKey.startsWith('ablock-') ||
                             assetKey === µb.userFiltersPath &&
                                 µb.userSettings.userFiltersTrusted,
                     };

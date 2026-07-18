@@ -1,38 +1,30 @@
 ! Title: aBlock Origin – Zero Tolerance Filters
 ! Description: Aggressive ad blocking rules for zero ad tolerance. YouTube, Twitch, Google Ads, Facebook, popups and more.
 ! Maintainer: AnkushMahatoAI
-! Last updated: 2026-07-17 (v2 — added movie site download unbreak rules)
+! Last updated: 2026-07-18 (v3 — complete YouTube overhaul, deep API interception)
 ! Homepage: https://github.com/AnkushMahatoAI/aBlock
 ! License: https://github.com/AnkushMahatoAI/aBlock/blob/master/LICENSE
 
-!--------------------------- GOOGLE AD NETWORKS ----------------------------!
-||doubleclick.net^$third-party
-||googlesyndication.com^$third-party
-||googletagservices.com^$third-party
-||googleadservices.com^$third-party
-||googletagmanager.com/gtag/js$script,third-party
-||adservice.google.com^
-||adservice.google.co.in^
-||adservice.google.co.uk^
-||adservice.google.de^
-||adservice.google.fr^
-||ads.google.com^$third-party
-||pagead2.googlesyndication.com^
-||tpc.googlesyndication.com^
-||partner.googleadservices.com^
-||cm.g.doubleclick.net^
-||ad.doubleclick.net^
-||stats.g.doubleclick.net^
-||securepubads.g.doubleclick.net^
-||fundingchoicesmessages.google.com^
+!======================== YOUTUBE – ZERO TOLERANCE ============================!
+! Strategy: Block ad delivery at the network level, prune ad data from API
+! responses at both XHR and Fetch layers, hide all ad-related DOM elements,
+! auto-click skip buttons, and suppress the anti-adblock enforcement wall.
 
-!------------------------------ YOUTUBE ADS --------------------------------!
+!------------------------------ NETWORK BLOCKING --------------------------------!
+! Block YouTube ad tracking / impression pixels
 ||googlevideo.com/initplayback?source=youtube^$xhr,domain=youtube.com
 ||googlevideo.com/pcs/activeview?$image,domain=youtube.com
 ||static.doubleclick.net^$domain=youtube.com
 ||www.youtube.com/api/stats/ads$xhr,1p
 ||www.youtube.com/ptracking$xhr,1p
+||www.youtube.com/pagead/$xhr,1p
+||www.youtube.com/get_video_info?*adformat$xhr,1p
+||imasdk.googleapis.com/js/sdkloader/ima3.js$script,domain=youtube.com
+||imasdk.googleapis.com^$domain=youtube.com
+||fundingchoicesmessages.google.com^$domain=youtube.com
 
+!------------------------------ COSMETIC HIDING --------------------------------!
+! Video player ad overlays
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.video-ads
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-module
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-overlay-container
@@ -40,6 +32,15 @@ m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,y
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-text-overlay
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-player-overlay
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-player-overlay-instream-info
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-preview-container
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-progress-list
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-button-icon
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-visit-advertiser-button
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-image-overlay
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-feedback-dialog-container
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytp-ad-persistent-progress-bar-container
+
+! Sidebar / feed ad renderers
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytd-display-ad-renderer
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##ytd-promoted-sparkles-web-renderer
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##ytd-promoted-video-renderer
@@ -50,22 +51,69 @@ m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,y
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##ytd-statement-banner-renderer
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##ytd-in-feed-ad-layout-renderer
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com###masthead-ad
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##ytd-rich-shelf-renderer[is-shelf-item]
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##ytd-promoted-sparkles-text-search-renderer
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##ytd-search-pyv-renderer
+
+! Has-based container hiding (wraps around ad slots in the main feed)
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytd-rich-item-renderer:has(ytd-ad-slot-renderer)
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##.ytd-rich-item-renderer:has(ytd-in-feed-ad-layout-renderer)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##ytd-rich-item-renderer:has(> .ytd-rich-item-renderer > ytd-ad-slot-renderer)
+
+! Consent / cookie bump
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##tp-yt-paper-dialog:has(.ytd-consent-bump-v2-lightbox)
 
+!-------------------- PRUNE AD DATA FROM API RESPONSES ----------------------!
+! This is the most effective technique — removes adPlacements/playerAds/adSlots
+! from YouTube's /youtubei/v1/player API responses BEFORE the player JS sees them.
+! Works for both Fetch and XHR (YouTube uses both depending on context).
+
+! === json-prune approach (preferred — surgically removes fields by path) ===
+
+! Intercept fetch() calls to /player endpoint
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots adBreakHeartbeatParams, , propsToMatch, url:/youtubei/v1/player)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots adBreakHeartbeatParams, , propsToMatch, url:/youtubei/v1/get_watch)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots, , propsToMatch, url:/watch)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots, , propsToMatch, url:/playlist)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots, , propsToMatch, url:/next)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots, , propsToMatch, url:/browse)
+
+! Intercept XHR calls to /player endpoint
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-xhr-response, adPlacements playerAds adSlots adBreakHeartbeatParams, , propsToMatch, url:/youtubei/v1/player)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-xhr-response, adPlacements playerAds adSlots adBreakHeartbeatParams, , propsToMatch, url:/youtubei/v1/get_watch)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-xhr-response, adPlacements playerAds adSlots, , propsToMatch, url:/watch)
+
+! Intercept inline JSON embedded in page scripts (ytInitialPlayerResponse)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune, adPlacements playerAds adSlots adBreakHeartbeatParams)
+
+!-------------------- GLOBAL VARIABLE NULLIFICATION -------------------------!
+! Remove ad data from the global ytInitialPlayerResponse injected by YouTube
+! before the player JS initialises
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(set, ytInitialPlayerResponse.playerAds, undefined)
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(set, ytInitialPlayerResponse.adPlacements, undefined)
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(set, ytInitialPlayerResponse.adSlots, undefined)
 m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(set, playerResponse.adPlacements, undefined)
-m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune, playerResponse.adPlacements playerResponse.playerAds playerResponse.adSlots adPlacements playerAds adSlots)
-m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots, , propsToMatch, /youtubei/v1/player)
-m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-xhr-response, adPlacements playerAds adSlots, , propsToMatch, /youtubei/v1/player)
 
-! Anti-adblock bypass
+!-------------------- SHORTS / REELS AD REMOVAL ------------------------------!
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, reelWatchSequenceResponse.entries.[-].command.reelWatchEndpoint.adClientParams.isAd entries.[-].command.reelWatchEndpoint.adClientParams.isAd, , propsToMatch, url:/reel_watch_sequence)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune, entries.[-].command.reelWatchEndpoint.adClientParams.isAd)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots, , propsToMatch, url:/reel_watch_sequence)
+
+!-------------------- SKIP BUTTON AUTO-CLICKER (FALLBACK) -------------------!
+! Safety net: auto-click skip button for any ads that somehow slip through
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(trusted-click-element, .ytp-skip-ad-button, , 500)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(trusted-click-element, .ytp-ad-skip-button, , 200)
+m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(trusted-click-element, .ytp-ad-skip-button-modern, , 200)
+
+!-------------------- ANTI-ADBLOCK ENFORCEMENT WALL -------------------------!
+! Suppresses YouTube's "turn off your ad blocker" interstitial
 www.youtube.com##+js(set, yt.config_.openPopupConfig.supportedPopups.adBlockMessageViewModel, undefined)
 www.youtube.com##ytd-enforcement-message-view-model
 www.youtube.com##tp-yt-paper-dialog:has(yt-page-manager[page-name="ytd-yto-offline-error-interstitial-renderer"])
+www.youtube.com##ytd-popup-container:has(ytd-enforcement-message-view-model)
+www.youtube.com##yt-playability-error-supported-renderers:has(ytd-enforcement-message-view-model)
+! Prevents the "Video unavailable" overlay triggered by ad blocker detection
+www.youtube.com##+js(set, ytInitialData.alerts, undefined)
 
 !------------------------------ TWITCH ADS ---------------------------------!
 ||twitchsvc.net^
@@ -87,6 +135,27 @@ www.twitch.tv##+js(m3u-prune, /#EXT-X-DISCONTINUITY/, /twitch\.tv/)
 www.facebook.com,web.facebook.com##div[role="feed"] > div:has(span[aria-label="Sponsored"])
 www.instagram.com##article:has(span:has-text(/^Sponsored$/))
 www.instagram.com##div[data-testid="post-container"]:has(span:has-text(/^Sponsored$/))
+
+!---------------------------- GOOGLE AD NETWORKS ----------------------------!
+||doubleclick.net^$third-party
+||googlesyndication.com^$third-party
+||googletagservices.com^$third-party
+||googleadservices.com^$third-party
+||googletagmanager.com/gtag/js$script,third-party
+||adservice.google.com^
+||adservice.google.co.in^
+||adservice.google.co.uk^
+||adservice.google.de^
+||adservice.google.fr^
+||ads.google.com^$third-party
+||pagead2.googlesyndication.com^
+||tpc.googlesyndication.com^
+||partner.googleadservices.com^
+||cm.g.doubleclick.net^
+||ad.doubleclick.net^
+||stats.g.doubleclick.net^
+||securepubads.g.doubleclick.net^
+||fundingchoicesmessages.google.com^
 
 !------------------------------ AD NETWORKS --------------------------------!
 ||adnxs.com^$third-party
@@ -199,51 +268,6 @@ www.instagram.com##div[data-testid="post-container"]:has(span:has-text(/^Sponsor
 ##[class*="paywall"]:not(article):not(p)
 ##[id*="paywall"]:not(article)
 ##[class*="interstitial"]:not(article)
-
-!===================== TRUSTED SCRIPTLETS (ablock- is now a trusted prefix) =====================!
-! These are the most powerful YouTube ad blockers — intercept and strip ad data from API responses
-
-! Replace adPlacements/adSlots in YouTube XHR player responses
-www.youtube.com##+js(trusted-replace-xhr-response, '\"adPlacements\"', '\"no_ads\"', player?)
-www.youtube.com##+js(trusted-replace-xhr-response, '\"adSlots\"', '\"no_ads\"', player?)
-m.youtube.com##+js(trusted-replace-xhr-response, '\"adPlacements\"', '\"no_ads\"', player?)
-m.youtube.com##+js(trusted-replace-xhr-response, '\"adSlots\"', '\"no_ads\"', player?)
-music.youtube.com##+js(trusted-replace-xhr-response, '\"adPlacements\"', '\"no_ads\"', player?)
-music.youtube.com##+js(trusted-replace-xhr-response, '\"adSlots\"', '\"no_ads\"', player?)
-tv.youtube.com##+js(trusted-replace-xhr-response, '\"adPlacements\"', '\"no_ads\"', player?)
-tv.youtube.com##+js(trusted-replace-xhr-response, '\"adSlots\"', '\"no_ads\"', player?)
-
-! Replace adPlacements/adSlots in YouTube Fetch player responses
-www.youtube.com##+js(trusted-replace-fetch-response, '\"adPlacements\"', '\"no_ads\"', player?)
-www.youtube.com##+js(trusted-replace-fetch-response, '\"adSlots\"', '\"no_ads\"', player?)
-m.youtube.com##+js(trusted-replace-fetch-response, '\"adPlacements\"', '\"no_ads\"', player?)
-m.youtube.com##+js(trusted-replace-fetch-response, '\"adSlots\"', '\"no_ads\"', player?)
-music.youtube.com##+js(trusted-replace-fetch-response, '\"adPlacements\"', '\"no_ads\"', player?)
-music.youtube.com##+js(trusted-replace-fetch-response, '\"adSlots\"', '\"no_ads\"', player?)
-tv.youtube.com##+js(trusted-replace-fetch-response, '\"adPlacements\"', '\"no_ads\"', player?)
-tv.youtube.com##+js(trusted-replace-fetch-response, '\"adSlots\"', '\"no_ads\"', player?)
-
-! playlist requests
-||www.youtube.com/playlist?list=$xhr,1p,replace=/\"adPlacements\"/\"no_ads\"/
-||www.youtube.com/playlist?list=$xhr,1p,replace=/\"adSlots\"/\"no_ads\"/
-
-! watch requests
-||www.youtube.com/watch?$xhr,1p,replace=/\"adPlacements\"/\"no_ads\"/
-||www.youtube.com/watch?$xhr,1p,replace=/\"adSlots\"/\"no_ads\"/
-
-! v1/player endpoint
-||www.youtube.com/youtubei/v1/player?$xhr,1p,replace=/\"adPlacements\"/\"no_ads\"/
-||www.youtube.com/youtubei/v1/player?$xhr,1p,replace=/\"adSlots\"/\"no_ads\"/
-||youtube.com/youtubei/v1/get_watch?$xhr,1p,replace=/\"adPlacements\"/\"no_ads\"/
-||youtube.com/youtubei/v1/get_watch?$xhr,1p,replace=/\"adSlots\"/\"no_ads\"/
-
-! Reel/Shorts ad removal
-m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune-fetch-response, reelWatchSequenceResponse.entries.[-].command.reelWatchEndpoint.adClientParams.isAd entries.[-].command.reelWatchEndpoint.adClientParams.isAd, , propsToMatch, url:/reel_watch_sequence?)
-m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(json-prune, entries.[-].command.reelWatchEndpoint.adClientParams.isAd)
-
-! Skip button auto-clicker (for any ads that slip through)
-m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(trusted-click-element, .ytp-skip-ad-button, , 1000)
-m.youtube.com,music.youtube.com,tv.youtube.com,www.youtube.com,youtubekids.com,youtube-nocookie.com##+js(trusted-click-element, .ytp-ad-skip-button, , 500)
 
 !============== MOVIE / SERIES DOWNLOAD SITES — UNBREAK RULES ==============!
 ! These sites use redirect chains and CDN servers for downloads.
