@@ -1,122 +1,125 @@
 /*******************************************************************************
  *
- *  aBlock Origin — YouTube Zero-Tolerance Ad Blocker  v5
+ *  aBlock Origin — YouTube Zero-Tolerance Ad Blocker  v6
  *  Runs in MAIN world at document_start — no race condition possible.
  *
- *  Strategy (layered — each layer catches what the previous missed):
+ *  Layers (each catches what the previous missed):
  *
- *  Layer 1: API response pruning  ← PRIMARY DEFENSE — stops ads before they load
- *    - Patch window.fetch → strip adPlacements/playerAds/adSlots from /player
- *    - Patch window.XMLHttpRequest → same for XHR
- *    - Trap ytInitialPlayerResponse → prune before YouTube's player reads it
+ *  Layer 1 — API pruning (PRIMARY — stops ads before the player sees them)
+ *    1A  Patch window.fetch  → strip all ad fields from /player, /next, /browse …
+ *    1B  Patch XHR           → same
+ *    1C  Trap ytInitialPlayerResponse  → prune inline JSON before player reads it
+ *    1D  Trap ytInitialData            → prune ad items from home/watch page data
+ *    1E  Patch ytcfg.set    → block anti-adblock popup config key
  *
- *  Layer 2: Player API skip  ← catches anything that slips through Layer 1
- *    - Call player.skipAd() — YouTube's own internal skip method
- *    - Click the skip button if visible
- *    - NO video.playbackRate or video.currentTime manipulation (that broke things)
+ *  Layer 2 — Player API skip (catches slip-throughs)
+ *    - player.skipAd()  (YouTube's own internal method)
+ *    - click skip button
+ *    - mute video immediately on ad-showing so user never hears an ad
  *
- *  Layer 3: DOM cleanup  ← belt-and-suspenders
- *    - MutationObserver + interval → auto-click skip buttons, hide ad elements
- *    - YouTube SPA navigation events → re-apply on each page change
+ *  Layer 3 — DOM cleanup + aggressive polling
+ *    - MutationObserver fires on every DOM change
+ *    - 100 ms polling while ad is active, 500 ms otherwise
+ *    - Rapid-fire dismiss on EVERY navigation event (start + finish + data)
  *
  *******************************************************************************/
 
 (function youtubeZeroAds() {
     'use strict';
 
-    // ── Guard: only run on YouTube ──────────────────────────────────────────
+    // ── Guard: only run on YouTube domains ──────────────────────────────────
     const host = location.hostname;
     if (!host.includes('youtube.com') && !host.includes('youtubekids.com') &&
         !host.includes('youtube-nocookie.com')) return;
 
-    // ── Ad data properties to prune from API JSON responses ────────────────
+    // =========================================================================
+    // SHARED: ad property names to delete from every API JSON object
+    // =========================================================================
     const AD_PROPS = [
-        'adPlacements',
-        'playerAds',
-        'adSlots',
-        'adBreakHeartbeatParams',
-        'adSlotAndLayoutMetadataList',
-        'fulfillmentAds',
-        'adBreaks',
-        'adBreakLengthSeconds',
-        'auxiliaryUi',
-        'companionAdSlots',
-        'adComments',
-        'adMessages',
-        'adNotices',
-        'adBreakServiceResponse',
-        'paidContentOverlay',
+        'adPlacements', 'playerAds', 'adSlots', 'adBreaks',
+        'adBreakHeartbeatParams', 'adBreakLengthSeconds',
+        'adSlotAndLayoutMetadataList', 'fulfillmentAds',
+        'auxiliaryUi', 'companionAdSlots',
+        'adComments', 'adMessages', 'adNotices',
+        'adBreakServiceResponse', 'paidContentOverlay',
+        'showCompanionAds', 'adPreroll', 'adMidroll', 'adPostroll',
+        'interstitialAdRenderer', 'linearAdSequenceRenderer',
+        'adLayoutLoggingData', 'adRendererLoggingData',
     ];
 
-    // ── URL patterns whose responses carry ad placement data ───────────────
-    const PLAYER_URL_RE = /\/(youtubei\/v1\/player|youtubei\/v1\/get_watch|watch[\?#]|playlist[\?#]|next[\?#]|reel_watch_sequence|browse[\?#])/;
+    // Matches every YouTube internal API URL that may carry ad scheduling data
+    const AD_URL_RE = /\/(youtubei\/v1\/(player|next|browse|guide|search|reel_watch_sequence|get_watch)|watch|embed\/|shorts\/)/;
 
-    // ── Deep-prune ad props from an object ─────────────────────────────────
-    function pruneAds(obj) {
+    // ── Recursively prune ad props from a parsed JSON object ─────────────────
+    function pruneAds(obj, depth) {
         if (!obj || typeof obj !== 'object') return obj;
+        if ((depth || 0) > 6) return obj;   // safety — don't recurse forever
         for (const prop of AD_PROPS) {
             if (prop in obj) {
                 try { delete obj[prop]; } catch (_) { obj[prop] = undefined; }
             }
         }
-        // Prune nested playerResponse (used in some embed / next responses)
-        if (obj.playerResponse) pruneAds(obj.playerResponse);
-        // Prune nested contents arrays (browse response)
-        if (Array.isArray(obj.contents)) obj.contents = obj.contents.filter(
-            item => !item || (!item.adSlotRenderer && !item.adPlacementRenderer)
-        );
+        // Recurse into well-known nesting points
+        if (obj.playerResponse)    pruneAds(obj.playerResponse, (depth || 0) + 1);
+        if (obj.streamingData)     {} // leave streaming data alone
+        if (obj.contents && Array.isArray(obj.contents)) {
+            obj.contents = obj.contents.filter(
+                item => !item || !(item.adSlotRenderer || item.adPlacementRenderer ||
+                                   item.promotedVideoRenderer || item.searchPyvRenderer)
+            );
+        }
+        if (obj.items && Array.isArray(obj.items)) {
+            obj.items = obj.items.filter(
+                item => !item || !(item.adSlotRenderer || item.adPlacementRenderer)
+            );
+        }
         return obj;
     }
 
-    // ── Parse, prune, and re-serialize a JSON string ───────────────────────
     function pruneJSON(text) {
-        try {
-            return JSON.stringify(pruneAds(JSON.parse(text)));
-        } catch (_) {
-            return text;
-        }
+        if (!text || text[0] !== '{') return text;
+        try { return JSON.stringify(pruneAds(JSON.parse(text))); }
+        catch (_) { return text; }
     }
 
-    // ==========================================================================
+    // =========================================================================
     // LAYER 1A — Patch window.fetch
-    // ==========================================================================
+    // =========================================================================
     const _fetch = window.fetch;
     window.fetch = function patchedFetch(input, init) {
-        const url = typeof input === 'string'   ? input
-                  : input instanceof URL        ? input.href
-                  : input instanceof Request    ? input.url
-                  : '';
+        const url = typeof input === 'string'  ? input
+                  : input instanceof URL       ? input.href
+                  : input instanceof Request   ? input.url : '';
 
         const promise = Reflect.apply(_fetch, this, arguments);
-        if (!PLAYER_URL_RE.test(url)) return promise;
+        if (!AD_URL_RE.test(url)) return promise;
 
-        return promise.then(response => {
-            return response.clone().text()
+        return promise.then(resp => {
+            return resp.clone().text()
                 .then(text => new Response(pruneJSON(text), {
-                    status:     response.status,
-                    statusText: response.statusText,
-                    headers:    response.headers,
+                    status: resp.status, statusText: resp.statusText,
+                    headers: resp.headers,
                 }))
-                .catch(() => response);
+                .catch(() => resp);
         }).catch(() => promise);
     };
 
-    // ==========================================================================
+    // =========================================================================
     // LAYER 1B — Patch XMLHttpRequest
-    // ==========================================================================
+    // =========================================================================
     const _XHROpen = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function(method, url, ...rest) {
         this.__ytUrl = typeof url === 'string' ? url : '';
         return Reflect.apply(_XHROpen, this, [method, url, ...rest]);
     };
 
-    const _XHRResponseGetter     = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response').get;
-    const _XHRResponseTextGetter = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText').get;
+    const _respGet = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response').get;
+    const _textGet = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText').get;
 
     Object.defineProperty(XMLHttpRequest.prototype, 'response', {
         get() {
-            const r = Reflect.apply(_XHRResponseGetter, this, []);
-            if (!PLAYER_URL_RE.test(this.__ytUrl)) return r;
+            const r = Reflect.apply(_respGet, this, []);
+            if (!AD_URL_RE.test(this.__ytUrl)) return r;
             if (typeof r === 'string') return pruneJSON(r);
             if (r && typeof r === 'object') return pruneAds(r);
             return r;
@@ -127,19 +130,17 @@
     Object.defineProperty(XMLHttpRequest.prototype, 'responseText', {
         get() {
             try {
-                const r = Reflect.apply(_XHRResponseTextGetter, this, []);
-                if (!PLAYER_URL_RE.test(this.__ytUrl)) return r;
+                const r = Reflect.apply(_textGet, this, []);
+                if (!AD_URL_RE.test(this.__ytUrl)) return r;
                 return pruneJSON(r);
-            } catch (_) {
-                return Reflect.apply(_XHRResponseTextGetter, this, []);
-            }
+            } catch (_) { return Reflect.apply(_textGet, this, []); }
         },
         configurable: true,
     });
 
-    // ==========================================================================
-    // LAYER 1C — Trap ytInitialPlayerResponse (inline <script> JSON on page)
-    // ==========================================================================
+    // =========================================================================
+    // LAYER 1C — Trap ytInitialPlayerResponse (set by inline <script> on page)
+    // =========================================================================
     let _ytpr;
     Object.defineProperty(window, 'ytInitialPlayerResponse', {
         get() { return _ytpr; },
@@ -147,18 +148,50 @@
         configurable: true,
     });
 
-    // ==========================================================================
+    // =========================================================================
+    // LAYER 1D — Trap ytInitialData (home + watch page feed data)
+    // =========================================================================
+    let _ytid;
+    Object.defineProperty(window, 'ytInitialData', {
+        get() { return _ytid; },
+        set(v) { _ytid = pruneAds(v); },
+        configurable: true,
+    });
+
+    // =========================================================================
+    // LAYER 1E — Patch ytcfg.set → remove anti-adblock popup config
+    // =========================================================================
+    function patchYtcfg() {
+        try {
+            const cfg = window.ytcfg;
+            if (!cfg || !cfg.set || cfg.__aBlockPatched) return;
+            const _orig = cfg.set.bind(cfg);
+            cfg.set = function(key, value) {
+                // Remove the "you're using an ad blocker" popup trigger
+                if (key === 'openPopupConfig' && value && value.supportedPopups) {
+                    delete value.supportedPopups.adBlockMessageViewModel;
+                }
+                // Remove ad-related config keys passed as an object
+                if (key && typeof key === 'object') {
+                    for (const prop of AD_PROPS) delete key[prop];
+                }
+                return _orig(key, value);
+            };
+            cfg.__aBlockPatched = true;
+        } catch (_) {}
+    }
+    patchYtcfg();
+    // Also try after DOM is ready in case ytcfg loads late
+    document.addEventListener('DOMContentLoaded', patchYtcfg, { once: true });
+
+    // =========================================================================
     // LAYER 2 — Player API skip
     //
-    // Uses YouTube's own internal skipAd() method and the skip button.
-    // NEVER touches video.playbackRate or video.currentTime — those affect
-    // the main video and caused fast-forwarding of real content.
-    // ==========================================================================
+    // NEVER sets video.playbackRate or video.currentTime — that caused the
+    // main video to be fast-forwarded.  Only uses YouTube's own APIs.
+    // =========================================================================
 
     function isAdPlaying() {
-        // .ad-showing is the ONLY class YouTube adds exclusively during ads.
-        // All other ad-related classes are present in the DOM even during
-        // normal playback (just hidden via CSS), so ONLY check this one.
         const player = document.querySelector('.html5-video-player');
         return player ? player.classList.contains('ad-showing') : false;
     }
@@ -171,144 +204,159 @@
             '.ytp-ad-skip-button-slot button',
             '[class*="skip-ad-button"]',
             'button[class*="SkipAdButton"]',
+            '.ytp-ad-skip-button-container button',
         ].join(','));
         if (btn) { btn.click(); return true; }
         return false;
     }
 
     function skipViaPlayerAPI() {
-        // YouTube exposes skipAd() on the #movie_player element
         const player = document.querySelector('#movie_player');
         if (!player) return false;
+        // Primary: direct skipAd()
         if (typeof player.skipAd === 'function') {
             try { player.skipAd(); return true; } catch (_) {}
         }
-        // Some versions expose it under the internal player API
+        // Alternate: internal API interface
         if (typeof player.getInternalApiInterface === 'function') {
             try {
-                const iface = player.getInternalApiInterface();
-                if (iface && typeof iface.skipAd === 'function') {
-                    iface.skipAd();
-                    return true;
+                const api = player.getInternalApiInterface();
+                if (api && typeof api.skipAd === 'function') {
+                    api.skipAd(); return true;
                 }
             } catch (_) {}
         }
         return false;
     }
 
-    // Main entry point: try every method to dismiss the ad, never touch video speed
-    function dismissAd() {
-        if (!isAdPlaying()) return;
-        // 1. Skip button (skippable ads)
-        if (clickSkipButton()) return;
-        // 2. YouTube's own skipAd() API
-        if (skipViaPlayerAPI()) return;
-        // 3. Last resort: click skip button again in case it appeared after skipAd()
-        setTimeout(() => {
-            if (isAdPlaying()) clickSkipButton();
-        }, 300);
+    // Mute video the instant an ad starts so user never hears it
+    let _mutedForAd = false;
+    let _realVolume = null;
+    let _realMuted  = null;
+
+    function muteForAd() {
+        if (_mutedForAd) return;
+        const video = document.querySelector('.html5-video-player video');
+        if (!video) return;
+        _realVolume = video.volume;
+        _realMuted  = video.muted;
+        video.muted = true;
+        _mutedForAd = true;
     }
 
-    // ==========================================================================
-    // LAYER 3A — DOM cleanup: hide all ad-related elements
-    // ==========================================================================
+    function unmuteAfterAd() {
+        if (!_mutedForAd) return;
+        const video = document.querySelector('.html5-video-player video');
+        if (!video) return;
+        if (_realMuted  !== null) video.muted  = _realMuted;
+        if (_realVolume !== null) video.volume = _realVolume;
+        _mutedForAd = false;
+        _realVolume = null;
+        _realMuted  = null;
+    }
+
+    function dismissAd() {
+        if (!isAdPlaying()) {
+            // Ad just ended — restore volume
+            if (_mutedForAd) unmuteAfterAd();
+            return;
+        }
+        // Mute immediately so user doesn't hear even a fraction of the ad
+        muteForAd();
+        // Try to skip it
+        if (clickSkipButton()) return;
+        skipViaPlayerAPI();
+        // Try skip button again shortly (skip button may appear after skipAd())
+        setTimeout(() => { if (isAdPlaying()) clickSkipButton(); }, 300);
+        setTimeout(() => { if (isAdPlaying()) { clickSkipButton(); skipViaPlayerAPI(); } }, 700);
+    }
+
+    // =========================================================================
+    // LAYER 3A — DOM: hide every ad element
+    // =========================================================================
     const AD_SELECTORS = [
-        '.video-ads',
-        '.ytp-ad-module',
-        '.ytp-ad-overlay-container',
-        '.ytp-ad-skip-button-container',
-        '.ytp-ad-text-overlay',
-        '.ytp-ad-player-overlay',
-        '.ytp-ad-player-overlay-instream-info',
-        '.ytp-ad-preview-container',
-        '.ytp-ad-progress-list',
-        '.ytp-ad-persistent-progress-bar-container',
-        '.ytp-ad-image-overlay',
-        '.ytp-ad-feedback-dialog-container',
+        '.video-ads', '.ytp-ad-module',
+        '.ytp-ad-overlay-container', '.ytp-ad-skip-button-container',
+        '.ytp-ad-text-overlay', '.ytp-ad-player-overlay',
+        '.ytp-ad-player-overlay-instream-info', '.ytp-ad-preview-container',
+        '.ytp-ad-progress-list', '.ytp-ad-persistent-progress-bar-container',
+        '.ytp-ad-image-overlay', '.ytp-ad-feedback-dialog-container',
+        '.ytp-ad-action-interstitial', '.ytp-ad-action-interstitial-background',
         'ytd-enforcement-message-view-model',
-        'ytd-ad-slot-renderer',
-        'ytd-in-feed-ad-layout-renderer',
-        'ytd-promoted-sparkles-web-renderer',
-        'ytd-display-ad-renderer',
-        'ytd-banner-promo-renderer',
-        'ytd-statement-banner-renderer',
-        'ytd-primetime-promo-renderer',
-        '#masthead-ad',
-        '#player-ads',
+        'ytd-ad-slot-renderer', 'ytd-in-feed-ad-layout-renderer',
+        'ytd-promoted-sparkles-web-renderer', 'ytd-display-ad-renderer',
+        'ytd-banner-promo-renderer', 'ytd-statement-banner-renderer',
+        'ytd-primetime-promo-renderer', 'ytd-compact-promoted-video-renderer',
+        'ytd-promoted-video-renderer', 'ytd-search-pyv-renderer',
+        '#masthead-ad', '#player-ads',
+        'tp-yt-paper-dialog.ytd-enforcement-message-view-model',
     ].join(',');
 
     function hideAdElements() {
         document.querySelectorAll(AD_SELECTORS).forEach(el => {
             if (el.style.display !== 'none') el.style.cssText = 'display:none!important';
         });
-        // Hide rich-item wrappers containing ad slots
-        document.querySelectorAll('ytd-rich-item-renderer').forEach(item => {
-            if (item.querySelector('ytd-ad-slot-renderer, ytd-in-feed-ad-layout-renderer')) {
-                item.style.cssText = 'display:none!important';
-            }
+        document.querySelectorAll('ytd-rich-item-renderer, ytd-shelf-renderer').forEach(item => {
+            if (item.querySelector(
+                'ytd-ad-slot-renderer,ytd-in-feed-ad-layout-renderer,' +
+                'ytd-promoted-video-renderer,ytd-search-pyv-renderer'
+            )) item.style.cssText = 'display:none!important';
         });
     }
 
-    // ==========================================================================
-    // LAYER 3B — MutationObserver: react to every DOM change
-    // ==========================================================================
-    function onMutation() {
-        dismissAd();
-        hideAdElements();
-    }
+    // =========================================================================
+    // LAYER 3B — MutationObserver
+    // =========================================================================
+    const _observer = new MutationObserver(() => { dismissAd(); hideAdElements(); });
+    _observer.observe(document.documentElement, { childList: true, subtree: true });
 
-    const observer = new MutationObserver(onMutation);
-    observer.observe(document.documentElement, { childList: true, subtree: true });
-
-    // ==========================================================================
-    // LAYER 3C — Polling interval
+    // =========================================================================
+    // LAYER 3C — Adaptive polling
     //
-    // MutationObserver fires for DOM changes but YouTube sometimes starts ads
-    // inside the existing video element with no new DOM nodes added.
-    // ==========================================================================
-    let _pollInterval = setInterval(() => {
-        if (isAdPlaying()) dismissAd();
-        hideAdElements();
-    }, 200);
+    // Runs every 100 ms while an ad is active (very aggressive), drops to
+    // 500 ms once the page is settled.  This catches ads that play inside the
+    // existing video element without any DOM mutation.
+    // =========================================================================
+    let _fastPoll = null;
+    let _slowPoll = null;
 
-    // Slow down after 60s — page is fully loaded by then
-    setTimeout(() => {
-        clearInterval(_pollInterval);
-        _pollInterval = setInterval(() => {
-            if (isAdPlaying()) dismissAd();
+    function startFastPoll() {
+        if (_fastPoll) return;
+        _fastPoll = setInterval(() => {
+            dismissAd();
             hideAdElements();
-        }, 500);
-    }, 60000);
-
-    // ==========================================================================
-    // LAYER 3D — YouTube SPA navigation events
-    //
-    // YouTube is a Single Page Application. Navigation fires custom events
-    // instead of a full page reload.
-    // ==========================================================================
-    function onYouTubeNavigation() {
-        setTimeout(() => dismissAd(), 300);
-        setTimeout(() => dismissAd(), 800);
-        setTimeout(() => dismissAd(), 1500);
-        setTimeout(() => hideAdElements(), 500);
+            if (!isAdPlaying()) {
+                clearInterval(_fastPoll);
+                _fastPoll = null;
+            }
+        }, 100);
     }
 
-    document.addEventListener('yt-navigate-finish', onYouTubeNavigation);
-    document.addEventListener('yt-page-data-updated', onYouTubeNavigation);
-
-    // ==========================================================================
-    // LAYER 1D — Block anti-adblock popup config
-    // ==========================================================================
-    try {
-        const _ytcfgSet = window.ytcfg && window.ytcfg.set;
-        if (_ytcfgSet) {
-            window.ytcfg.set = function(key, value) {
-                if (key === 'openPopupConfig' && value && value.supportedPopups) {
-                    delete value.supportedPopups.adBlockMessageViewModel;
-                }
-                return Reflect.apply(_ytcfgSet, this, arguments);
-            };
+    _slowPoll = setInterval(() => {
+        hideAdElements();
+        if (isAdPlaying()) {
+            dismissAd();
+            startFastPoll();   // kick into high gear while ad is active
         }
-    } catch (_) {}
+    }, 500);
+
+    // =========================================================================
+    // LAYER 3D — Navigation events
+    //
+    // YouTube SPA: yt-navigate-start fires BEFORE the new page data loads,
+    // giving us the earliest possible hook.
+    // =========================================================================
+    function onNavigation() {
+        // Rapid-fire dismiss attempts covering the full load window (0–3 s)
+        for (const delay of [0, 100, 250, 500, 800, 1200, 2000, 3000]) {
+            setTimeout(() => { dismissAd(); hideAdElements(); }, delay);
+        }
+        startFastPoll();
+    }
+
+    document.addEventListener('yt-navigate-start',        onNavigation);
+    document.addEventListener('yt-navigate-finish',       onNavigation);
+    document.addEventListener('yt-page-data-updated',     onNavigation);
+    document.addEventListener('yt-player-updated',        onNavigation);
 
 })();
