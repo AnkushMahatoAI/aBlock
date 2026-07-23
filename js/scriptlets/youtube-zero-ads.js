@@ -170,12 +170,18 @@
         return false;
     }
 
-    // Track which video elements we've already hooked to avoid duplicate listeners
-    const _hookedVideos = new WeakSet();
+    // Track which video elements we've already hooked to avoid duplicate listeners.
+    // A generation counter lets us "reset" the set on SPA navigation without
+    // needing WeakSet.clear() (which doesn't exist).
+    let _hookGen = 0;
+    const _hookedVideos = new WeakMap(); // video element -> generation it was hooked in
 
     function speedThroughAd(video) {
-        if (!video || _hookedVideos.has(video)) return false;
-        _hookedVideos.add(video);
+        if (!video) return false;
+        // If already hooked in the CURRENT generation, don't double-hook
+        if (_hookedVideos.get(video) === _hookGen) return false;
+        _hookedVideos.set(video, _hookGen);
+        const hookedGen = _hookGen; // capture gen at hook time
         try {
             // Save the user's real settings before touching them
             const realRate   = video.playbackRate || 1;
@@ -194,7 +200,8 @@
                 video.muted        = realMuted;
                 video.volume       = realVolume;
                 video.removeEventListener('timeupdate', onTimeUpdate);
-                _hookedVideos.delete(video);
+                // Un-mark so a future ad on the same element can be hooked again
+                if (_hookedVideos.get(video) === hookedGen) _hookedVideos.delete(video);
             }
             video.addEventListener('timeupdate', onTimeUpdate, { passive: true });
 
@@ -278,7 +285,7 @@
         if (isAdPlaying()) {
             // Ad is playing — be very aggressive
             if (!clickSkipButton()) {
-                fastForwardVideo(document.querySelector('.html5-video-player video, video'));
+                speedThroughAd(document.querySelector('.html5-video-player video, video'));
             }
         }
         hideAdElements();
@@ -290,7 +297,7 @@
         _pollInterval = setInterval(() => {
             if (isAdPlaying()) {
                 if (!clickSkipButton()) {
-                    fastForwardVideo(document.querySelector('.html5-video-player video, video'));
+                    speedThroughAd(document.querySelector('.html5-video-player video, video'));
                 }
             }
         }, 500);
@@ -304,6 +311,9 @@
     // instead. We listen for these to re-apply skip logic after each navigation.
     // ==========================================================================
     function onYouTubeNavigation() {
+        // Increment generation counter — this effectively resets the "hooked" set
+        // so the new video element on the next page gets the ad-skip hook
+        _hookGen++;
         // New video is loading — apply skip logic after a short delay
         // to let YouTube set up the new player
         setTimeout(() => skipOrFastForwardAd(null), 300);
