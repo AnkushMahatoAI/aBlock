@@ -1,28 +1,23 @@
 /*******************************************************************************
  *
- *  aBlock Origin — YouTube Zero-Tolerance Ad Blocker  v4
+ *  aBlock Origin — YouTube Zero-Tolerance Ad Blocker  v5
  *  Runs in MAIN world at document_start — no race condition possible.
  *
  *  Strategy (layered — each layer catches what the previous missed):
  *
- *  Layer 1: API response pruning
+ *  Layer 1: API response pruning  ← PRIMARY DEFENSE — stops ads before they load
  *    - Patch window.fetch → strip adPlacements/playerAds/adSlots from /player
  *    - Patch window.XMLHttpRequest → same for XHR
  *    - Trap ytInitialPlayerResponse → prune before YouTube's player reads it
  *
- *  Layer 2: Video-level ad skip (catches anything that slips through Layer 1)
- *    - Patch HTMLMediaElement.play() → detect ad-showing state on play start
- *    - Fast-forward video.currentTime to video.duration when ad is playing
- *    - Handle both skippable and non-skippable ads
+ *  Layer 2: Player API skip  ← catches anything that slips through Layer 1
+ *    - Call player.skipAd() — YouTube's own internal skip method
+ *    - Click the skip button if visible
+ *    - NO video.playbackRate or video.currentTime manipulation (that broke things)
  *
- *  Layer 3: DOM cleanup (belt-and-suspenders)
+ *  Layer 3: DOM cleanup  ← belt-and-suspenders
  *    - MutationObserver + interval → auto-click skip buttons, hide ad elements
- *    - YouTube SPA navigation events → re-apply skip on each page change
- *
- *  What was REMOVED from v3 (they caused forced reloads / page breakage):
- *    ✗ window.google = undefined  (broke auth, caused YouTube to reload)
- *    ✗ EventTarget.prototype.addEventListener override (broke SPA navigation)
- *    ✗ ytInitialData.alerts filter (could break legitimate error messages)
+ *    - YouTube SPA navigation events → re-apply on each page change
  *
  *******************************************************************************/
 
@@ -44,13 +39,19 @@
         'fulfillmentAds',
         'adBreaks',
         'adBreakLengthSeconds',
-        'auxiliaryUi',            // used in newer YouTube for ad overlays
+        'auxiliaryUi',
+        'companionAdSlots',
+        'adComments',
+        'adMessages',
+        'adNotices',
+        'adBreakServiceResponse',
+        'paidContentOverlay',
     ];
 
     // ── URL patterns whose responses carry ad placement data ───────────────
     const PLAYER_URL_RE = /\/(youtubei\/v1\/player|youtubei\/v1\/get_watch|watch[\?#]|playlist[\?#]|next[\?#]|reel_watch_sequence|browse[\?#])/;
 
-    // ── Prune ad props in-place from an object ─────────────────────────────
+    // ── Deep-prune ad props from an object ─────────────────────────────────
     function pruneAds(obj) {
         if (!obj || typeof obj !== 'object') return obj;
         for (const prop of AD_PROPS) {
@@ -58,8 +59,12 @@
                 try { delete obj[prop]; } catch (_) { obj[prop] = undefined; }
             }
         }
-        // Also prune nested playerResponse (used in some embed / next responses)
+        // Prune nested playerResponse (used in some embed / next responses)
         if (obj.playerResponse) pruneAds(obj.playerResponse);
+        // Prune nested contents arrays (browse response)
+        if (Array.isArray(obj.contents)) obj.contents = obj.contents.filter(
+            item => !item || (!item.adSlotRenderer && !item.adPlacementRenderer)
+        );
         return obj;
     }
 
@@ -105,7 +110,7 @@
         return Reflect.apply(_XHROpen, this, [method, url, ...rest]);
     };
 
-    const _XHRResponseGetter = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response').get;
+    const _XHRResponseGetter     = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'response').get;
     const _XHRResponseTextGetter = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText').get;
 
     Object.defineProperty(XMLHttpRequest.prototype, 'response', {
@@ -143,16 +148,17 @@
     });
 
     // ==========================================================================
-    // LAYER 2 — Core ad-skip logic: skip button first, fast-forward fallback
+    // LAYER 2 — Player API skip
     //
-    // IMPORTANT: isAdPlaying() MUST use only .html5-video-player.ad-showing.
-    // Other ad elements (.ytp-ad-module, .ytp-ad-bar) are ALWAYS present in
-    // the DOM even during normal playback (just CSS-hidden), so querying them
-    // would incorrectly return true and fast-forward the main video.
-    // .html5-video-player.ad-showing is the ONLY class YouTube adds exclusively
-    // when an actual ad is playing.
+    // Uses YouTube's own internal skipAd() method and the skip button.
+    // NEVER touches video.playbackRate or video.currentTime — those affect
+    // the main video and caused fast-forwarding of real content.
     // ==========================================================================
+
     function isAdPlaying() {
+        // .ad-showing is the ONLY class YouTube adds exclusively during ads.
+        // All other ad-related classes are present in the DOM even during
+        // normal playback (just hidden via CSS), so ONLY check this one.
         const player = document.querySelector('.html5-video-player');
         return player ? player.classList.contains('ad-showing') : false;
     }
@@ -170,116 +176,72 @@
         return false;
     }
 
-    // Track which video elements we've already hooked to avoid duplicate listeners.
-    // A generation counter lets us "reset" the set on SPA navigation without
-    // needing WeakSet.clear() (which doesn't exist).
-    let _hookGen = 0;
-    const _hookedVideos = new WeakMap(); // video element -> generation it was hooked in
-
-    function speedThroughAd(video) {
-        if (!video) return false;
-        // If already hooked in the CURRENT generation, don't double-hook
-        if (_hookedVideos.get(video) === _hookGen) return false;
-        _hookedVideos.set(video, _hookGen);
-        const hookedGen = _hookGen; // capture gen at hook time
-        try {
-            // Save the user's real settings before touching them
-            const realRate   = video.playbackRate || 1;
-            const realMuted  = video.muted;
-            const realVolume = video.volume;
-
-            // Mute + speed up — ad plays at 16×, silently.
-            video.muted        = true;
-            video.playbackRate = 16;
-
-            function restoreAndPlay() {
-                video.removeEventListener('timeupdate', onTimeUpdate);
-                video.removeEventListener('ended', restoreAndPlay);
-                // Restore user's real settings
-                video.playbackRate = realRate;
-                video.muted        = realMuted;
-                video.volume       = realVolume;
-                // Un-mark so a future ad on the same element can be hooked again
-                if (_hookedVideos.get(video) === hookedGen) _hookedVideos.delete(video);
-                // YouTube sometimes leaves the player paused after the ad transition.
-                // Explicitly call play() to guarantee the main video resumes.
-                setTimeout(() => {
-                    if (video.paused && !isAdPlaying()) {
-                        video.play().catch(() => {});
-                    }
-                }, 150);
-            }
-
-            // Primary trigger: timeupdate fires every ~250ms while playing
-            function onTimeUpdate() {
-                if (isAdPlaying()) return;  // still in ad — keep waiting
-                restoreAndPlay();
-            }
-            video.addEventListener('timeupdate', onTimeUpdate, { passive: true });
-            // Secondary trigger: the video element's ended event
-            video.addEventListener('ended', restoreAndPlay, { once: true, passive: true });
-
-            // Emergency fallback: if still in ad after 1.5 s, jump to the end.
-            // currentTime = duration fires the native 'ended' event which triggers
-            // YouTube's own ad-end transition — much cleaner than seeking to dur-0.5.
-            setTimeout(() => {
-                if (!isAdPlaying()) return;
-                const dur = video.duration;
-                if (dur && isFinite(dur) && dur > 0.1) {
-                    video.currentTime = dur;
-                    // Recovery path: if stuck after seek, use YT API
-                    const player = document.querySelector('#movie_player');
-                    if (player && typeof player.stopVideo === 'function') {
-                        player.stopVideo();
-                        player.playVideo();
-                    }
-                }
-            }, 1500);
-
-            return true;
-        } catch (_) {
-            _hookedVideos.delete(video);
-            return false;
+    function skipViaPlayerAPI() {
+        // YouTube exposes skipAd() on the #movie_player element
+        const player = document.querySelector('#movie_player');
+        if (!player) return false;
+        if (typeof player.skipAd === 'function') {
+            try { player.skipAd(); return true; } catch (_) {}
         }
+        // Some versions expose it under the internal player API
+        if (typeof player.getInternalApiInterface === 'function') {
+            try {
+                const iface = player.getInternalApiInterface();
+                if (iface && typeof iface.skipAd === 'function') {
+                    iface.skipAd();
+                    return true;
+                }
+            } catch (_) {}
+        }
+        return false;
     }
 
-    function skipOrFastForwardAd(video) {
+    // Main entry point: try every method to dismiss the ad, never touch video speed
+    function dismissAd() {
         if (!isAdPlaying()) return;
-        if (clickSkipButton()) return;   // skippable ad — click skip button
-        // Non-skippable ad — mute + 16× speed through it
-        speedThroughAd(video || document.querySelector('.html5-video-player video, video'));
+        // 1. Skip button (skippable ads)
+        if (clickSkipButton()) return;
+        // 2. YouTube's own skipAd() API
+        if (skipViaPlayerAPI()) return;
+        // 3. Last resort: click skip button again in case it appeared after skipAd()
+        setTimeout(() => {
+            if (isAdPlaying()) clickSkipButton();
+        }, 300);
     }
 
     // ==========================================================================
-    // LAYER 3A — MutationObserver: react to every DOM change
+    // LAYER 3A — DOM cleanup: hide all ad-related elements
     // ==========================================================================
+    const AD_SELECTORS = [
+        '.video-ads',
+        '.ytp-ad-module',
+        '.ytp-ad-overlay-container',
+        '.ytp-ad-skip-button-container',
+        '.ytp-ad-text-overlay',
+        '.ytp-ad-player-overlay',
+        '.ytp-ad-player-overlay-instream-info',
+        '.ytp-ad-preview-container',
+        '.ytp-ad-progress-list',
+        '.ytp-ad-persistent-progress-bar-container',
+        '.ytp-ad-image-overlay',
+        '.ytp-ad-feedback-dialog-container',
+        'ytd-enforcement-message-view-model',
+        'ytd-ad-slot-renderer',
+        'ytd-in-feed-ad-layout-renderer',
+        'ytd-promoted-sparkles-web-renderer',
+        'ytd-display-ad-renderer',
+        'ytd-banner-promo-renderer',
+        'ytd-statement-banner-renderer',
+        'ytd-primetime-promo-renderer',
+        '#masthead-ad',
+        '#player-ads',
+    ].join(',');
+
     function hideAdElements() {
-        // Hide known ad DOM nodes
-        document.querySelectorAll([
-            '.video-ads',
-            '.ytp-ad-module',
-            '.ytp-ad-overlay-container',
-            '.ytp-ad-skip-button-container',
-            '.ytp-ad-text-overlay',
-            '.ytp-ad-player-overlay',
-            '.ytp-ad-player-overlay-instream-info',
-            '.ytp-ad-preview-container',
-            '.ytp-ad-progress-list',
-            '.ytp-ad-persistent-progress-bar-container',
-            '.ytp-ad-image-overlay',
-            '.ytp-ad-feedback-dialog-container',
-            'ytd-enforcement-message-view-model',
-            'ytd-ad-slot-renderer',
-            'ytd-in-feed-ad-layout-renderer',
-            'ytd-promoted-sparkles-web-renderer',
-            'ytd-display-ad-renderer',
-            'ytd-banner-promo-renderer',
-            '#masthead-ad',
-        ].join(',')).forEach(el => {
+        document.querySelectorAll(AD_SELECTORS).forEach(el => {
             if (el.style.display !== 'none') el.style.cssText = 'display:none!important';
         });
-
-        // Hide rich-item wrappers that contain ad slots
+        // Hide rich-item wrappers containing ad slots
         document.querySelectorAll('ytd-rich-item-renderer').forEach(item => {
             if (item.querySelector('ytd-ad-slot-renderer, ytd-in-feed-ad-layout-renderer')) {
                 item.style.cssText = 'display:none!important';
@@ -287,8 +249,11 @@
         });
     }
 
+    // ==========================================================================
+    // LAYER 3B — MutationObserver: react to every DOM change
+    // ==========================================================================
     function onMutation() {
-        skipOrFastForwardAd(null);
+        dismissAd();
         hideAdElements();
     }
 
@@ -296,59 +261,44 @@
     observer.observe(document.documentElement, { childList: true, subtree: true });
 
     // ==========================================================================
-    // LAYER 3B — Aggressive polling interval
+    // LAYER 3C — Polling interval
     //
-    // MutationObserver fires for DOM changes but YouTube sometimes plays ads
-    // entirely in the existing video element with no new DOM nodes.
-    // Polling catches these video-only ads.
+    // MutationObserver fires for DOM changes but YouTube sometimes starts ads
+    // inside the existing video element with no new DOM nodes added.
     // ==========================================================================
     let _pollInterval = setInterval(() => {
-        if (isAdPlaying()) {
-            // Ad is playing — be very aggressive
-            if (!clickSkipButton()) {
-                speedThroughAd(document.querySelector('.html5-video-player video, video'));
-            }
-        }
+        if (isAdPlaying()) dismissAd();
         hideAdElements();
-    }, 200);   // Check every 200ms — fast enough to skip, not enough to lag the page
+    }, 200);
 
-    // Slow down polling after 60s (initial load phase is over)
+    // Slow down after 60s — page is fully loaded by then
     setTimeout(() => {
         clearInterval(_pollInterval);
         _pollInterval = setInterval(() => {
-            if (isAdPlaying()) {
-                if (!clickSkipButton()) {
-                    speedThroughAd(document.querySelector('.html5-video-player video, video'));
-                }
-            }
+            if (isAdPlaying()) dismissAd();
+            hideAdElements();
         }, 500);
     }, 60000);
 
     // ==========================================================================
-    // LAYER 3C — YouTube SPA navigation events
+    // LAYER 3D — YouTube SPA navigation events
     //
-    // YouTube is a Single Page Application. When the user navigates between
-    // videos, a full page reload does NOT happen — YouTube fires custom events
-    // instead. We listen for these to re-apply skip logic after each navigation.
+    // YouTube is a Single Page Application. Navigation fires custom events
+    // instead of a full page reload.
     // ==========================================================================
     function onYouTubeNavigation() {
-        // Increment generation counter — this effectively resets the "hooked" set
-        // so the new video element on the next page gets the ad-skip hook
-        _hookGen++;
-        // New video is loading — apply skip logic after a short delay
-        // to let YouTube set up the new player
-        setTimeout(() => skipOrFastForwardAd(null), 300);
-        setTimeout(() => skipOrFastForwardAd(null), 800);
-        setTimeout(() => skipOrFastForwardAd(null), 1500);
+        setTimeout(() => dismissAd(), 300);
+        setTimeout(() => dismissAd(), 800);
+        setTimeout(() => dismissAd(), 1500);
+        setTimeout(() => hideAdElements(), 500);
     }
 
-    // yt-navigate-finish fires when YouTube SPA navigation completes
     document.addEventListener('yt-navigate-finish', onYouTubeNavigation);
-    // yt-page-data-updated fires when the page data (including player config) is updated
     document.addEventListener('yt-page-data-updated', onYouTubeNavigation);
 
-    // Also intercept yt.config_ updates to remove ad-related popup config
-    // (this is the anti-adblock detection wall config — safe to remove)
+    // ==========================================================================
+    // LAYER 1D — Block anti-adblock popup config
+    // ==========================================================================
     try {
         const _ytcfgSet = window.ytcfg && window.ytcfg.set;
         if (_ytcfgSet) {
