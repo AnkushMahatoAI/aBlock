@@ -170,23 +170,56 @@
         return false;
     }
 
-    function fastForwardVideo(video) {
-        if (!video) return false;
+    // Track which video elements we've already hooked to avoid duplicate listeners
+    const _hookedVideos = new WeakSet();
+
+    function speedThroughAd(video) {
+        if (!video || _hookedVideos.has(video)) return false;
+        _hookedVideos.add(video);
         try {
-            const dur = video.duration;
-            if (dur && isFinite(dur) && dur > 0) {
-                video.currentTime = dur;
-                return true;
+            // Save the user's real settings before touching them
+            const realRate   = video.playbackRate || 1;
+            const realMuted  = video.muted;
+            const realVolume = video.volume;
+
+            // Mute + speed up — ad plays at 16×, silently.
+            // YouTube's own ad-end logic fires cleanly (no stuck/loading state).
+            video.muted        = true;
+            video.playbackRate = 16;
+
+            // Restore as soon as the ad is over
+            function onTimeUpdate() {
+                if (isAdPlaying()) return;  // still in ad
+                video.playbackRate = realRate;
+                video.muted        = realMuted;
+                video.volume       = realVolume;
+                video.removeEventListener('timeupdate', onTimeUpdate);
+                _hookedVideos.delete(video);
             }
-        } catch (_) {}
-        return false;
+            video.addEventListener('timeupdate', onTimeUpdate, { passive: true });
+
+            // Emergency fallback: if still in ad after 2 s, seek to near-end
+            // (duration-0.5 avoids the EOF-buffer hang that exact duration caused)
+            setTimeout(() => {
+                if (!isAdPlaying()) return;
+                const dur = video.duration;
+                if (dur && isFinite(dur) && dur > 0.6) {
+                    video.currentTime = dur - 0.5;
+                }
+            }, 2000);
+
+            return true;
+        } catch (_) {
+            _hookedVideos.delete(video);
+            return false;
+        }
     }
 
     function skipOrFastForwardAd(video) {
         if (!isAdPlaying()) return;
-        if (clickSkipButton()) return;          // skippable ad — click skip
-        fastForwardVideo(video ||               // non-skippable ad — fast-forward
-            document.querySelector('.html5-video-player video, video'));
+        if (clickSkipButton()) return;   // skippable ad — click skip button
+        // Non-skippable ad — mute + 16× speed through it
+        speedThroughAd(video || document.querySelector('.html5-video-player video, video'));
     }
 
     // ==========================================================================
