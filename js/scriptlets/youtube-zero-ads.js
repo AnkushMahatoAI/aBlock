@@ -189,31 +189,52 @@
             const realVolume = video.volume;
 
             // Mute + speed up — ad plays at 16×, silently.
-            // YouTube's own ad-end logic fires cleanly (no stuck/loading state).
             video.muted        = true;
             video.playbackRate = 16;
 
-            // Restore as soon as the ad is over
-            function onTimeUpdate() {
-                if (isAdPlaying()) return;  // still in ad
+            function restoreAndPlay() {
+                video.removeEventListener('timeupdate', onTimeUpdate);
+                video.removeEventListener('ended', restoreAndPlay);
+                // Restore user's real settings
                 video.playbackRate = realRate;
                 video.muted        = realMuted;
                 video.volume       = realVolume;
-                video.removeEventListener('timeupdate', onTimeUpdate);
                 // Un-mark so a future ad on the same element can be hooked again
                 if (_hookedVideos.get(video) === hookedGen) _hookedVideos.delete(video);
+                // YouTube sometimes leaves the player paused after the ad transition.
+                // Explicitly call play() to guarantee the main video resumes.
+                setTimeout(() => {
+                    if (video.paused && !isAdPlaying()) {
+                        video.play().catch(() => {});
+                    }
+                }, 150);
+            }
+
+            // Primary trigger: timeupdate fires every ~250ms while playing
+            function onTimeUpdate() {
+                if (isAdPlaying()) return;  // still in ad — keep waiting
+                restoreAndPlay();
             }
             video.addEventListener('timeupdate', onTimeUpdate, { passive: true });
+            // Secondary trigger: the video element's ended event
+            video.addEventListener('ended', restoreAndPlay, { once: true, passive: true });
 
-            // Emergency fallback: if still in ad after 2 s, seek to near-end
-            // (duration-0.5 avoids the EOF-buffer hang that exact duration caused)
+            // Emergency fallback: if still in ad after 1.5 s, jump to the end.
+            // currentTime = duration fires the native 'ended' event which triggers
+            // YouTube's own ad-end transition — much cleaner than seeking to dur-0.5.
             setTimeout(() => {
                 if (!isAdPlaying()) return;
                 const dur = video.duration;
-                if (dur && isFinite(dur) && dur > 0.6) {
-                    video.currentTime = dur - 0.5;
+                if (dur && isFinite(dur) && dur > 0.1) {
+                    video.currentTime = dur;
+                    // Recovery path: if stuck after seek, use YT API
+                    const player = document.querySelector('#movie_player');
+                    if (player && typeof player.stopVideo === 'function') {
+                        player.stopVideo();
+                        player.playVideo();
+                    }
                 }
-            }, 2000);
+            }, 1500);
 
             return true;
         } catch (_) {
