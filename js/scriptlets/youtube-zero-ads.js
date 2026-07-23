@@ -143,27 +143,18 @@
     });
 
     // ==========================================================================
-    // LAYER 2A — Patch HTMLMediaElement.play() for immediate ad detection
+    // LAYER 2 — Core ad-skip logic: skip button first, fast-forward fallback
     //
-    // When YouTube starts playing an ad, it calls video.play(). We intercept
-    // this, check if the player is in ad-showing state, and fast-forward.
-    // ==========================================================================
-    const _play = HTMLMediaElement.prototype.play;
-    HTMLMediaElement.prototype.play = function() {
-        if (this.tagName === 'VIDEO') {
-            // Schedule a check immediately after play() returns
-            Promise.resolve().then(() => skipOrFastForwardAd(this));
-        }
-        return Reflect.apply(_play, this, arguments);
-    };
-
-    // ==========================================================================
-    // LAYER 2B — Core ad-skip logic: skip button first, fast-forward fallback
+    // IMPORTANT: isAdPlaying() MUST use only .html5-video-player.ad-showing.
+    // Other ad elements (.ytp-ad-module, .ytp-ad-bar) are ALWAYS present in
+    // the DOM even during normal playback (just CSS-hidden), so querying them
+    // would incorrectly return true and fast-forward the main video.
+    // .html5-video-player.ad-showing is the ONLY class YouTube adds exclusively
+    // when an actual ad is playing.
     // ==========================================================================
     function isAdPlaying() {
-        // YouTube marks the player container with .ad-showing when an ad plays
-        return !!document.querySelector('.ad-showing') ||
-               !!document.querySelector('.ytp-ad-bar, .ytp-ad-module');
+        const player = document.querySelector('.html5-video-player');
+        return player ? player.classList.contains('ad-showing') : false;
     }
 
     function clickSkipButton() {
