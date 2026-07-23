@@ -146,7 +146,7 @@
   "storage": {
     "managed_schema": "managed_storage.json"
   },
-  "version": "1.71.6.0",
+  "version": "1.0.5",
   "web_accessible_resources": [
     {
       "resources": ["/web_accessible_resources/*"],
